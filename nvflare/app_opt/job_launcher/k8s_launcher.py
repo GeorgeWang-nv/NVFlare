@@ -494,6 +494,9 @@ class K8sJobHandle(JobHandleSpec):
                 self.logger.info(
                     f"job {self.job_id} pod {self.pod_name} not found during querying; assuming terminated"
                 )
+                if not self._termination_requested:
+                    # The pod vanished without terminate(); do not report it as a user abort.
+                    self.terminal_return_code = ProcessExitCode.INFRASTRUCTURE_ERROR
                 self.terminal_state = JobState.TERMINATED
                 self._release_job_resources()
             else:

@@ -611,6 +611,33 @@ class TestK8sJobHandle:
         assert handle.poll() == JobReturnCode.SUCCESS
         ws_transfer.remove_job.assert_called_once_with("job-raw")
 
+    def test_poll_returns_infrastructure_error_when_pod_missing_without_terminate(self):
+        api = _make_api_instance()
+        api.read_namespaced_pod.side_effect = _FakeApiException(status=404, reason="Not Found")
+        handle = _make_handle(api=api)
+
+        assert handle.poll() == ProcessExitCode.INFRASTRUCTURE_ERROR
+        assert handle.terminal_state == JobState.TERMINATED
+        assert handle.poll() == ProcessExitCode.INFRASTRUCTURE_ERROR
+        api.delete_namespaced_pod.assert_not_called()
+
+    def test_poll_returns_aborted_when_pod_missing_during_terminate(self):
+        api = _make_api_instance()
+        api.read_namespaced_pod.side_effect = _FakeApiException(status=404, reason="Not Found")
+        handle = _make_handle(api=api)
+        observed = []
+
+        def delete_pod(**kwargs):
+            # Poll while terminate() is in flight: flag set, terminal_state not yet set.
+            assert handle.terminal_state is None
+            observed.append(handle.poll())
+
+        api.delete_namespaced_pod.side_effect = delete_pod
+        handle.terminate()
+
+        assert observed == [JobReturnCode.ABORTED]
+        assert handle.poll() == JobReturnCode.ABORTED
+
     # -- terminate ------------------------------------------------------------
     def test_terminate_deletes_pod_and_sets_terminated(self):
         api = _make_api_instance()
