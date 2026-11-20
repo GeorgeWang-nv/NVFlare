@@ -886,6 +886,36 @@ class TestK8sJobHandle:
 
         assert handle.poll() == JobReturnCode.ABORTED
 
+    def test_poll_reports_unrequested_pod_disappearance_as_infrastructure_error(self):
+        # A pod that vanishes without terminate() is not a user abort; reporting
+        # ABORTED would mark the job FINISHED_ABORTED and block CJ restart.
+        api = _make_api_instance()
+        api.read_namespaced_pod.side_effect = _FakeApiException(status=404, reason="Not Found")
+        handle = _make_handle(api=api)
+
+        assert handle.poll() == ProcessExitCode.INFRASTRUCTURE_ERROR
+        assert handle.terminal_state == JobState.TERMINATED
+        assert handle.poll() == ProcessExitCode.INFRASTRUCTURE_ERROR
+
+    def test_poll_during_terminate_delete_keeps_manual_abort(self):
+        # A concurrent poll that sees the 404 caused by terminate()'s own delete
+        # must not record INFRASTRUCTURE_ERROR, which would stick after terminate().
+        api = _make_api_instance()
+        api.read_namespaced_pod.side_effect = _FakeApiException(status=404, reason="Not Found")
+        handle = _make_handle(api=api)
+        observed = []
+
+        def poll_during_delete(**kwargs):
+            observed.append(handle.poll())
+
+        api.delete_namespaced_pod.side_effect = poll_during_delete
+
+        handle.terminate()
+
+        api.read_namespaced_pod.assert_called_once()
+        assert observed == [JobReturnCode.ABORTED]
+        assert handle.poll() == JobReturnCode.ABORTED
+
     def test_poll_honors_preserved_return_code_when_observed_state_becomes_terminal(self):
         api = _make_api_instance()
         resp = Mock()

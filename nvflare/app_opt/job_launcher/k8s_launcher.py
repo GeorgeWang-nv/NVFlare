@@ -494,6 +494,10 @@ class K8sJobHandle(JobHandleSpec):
                 self.logger.info(
                     f"job {self.job_id} pod {self.pod_name} not found during querying; assuming terminated"
                 )
+                # Checked after the 404 so a delete issued by terminate() is never
+                # misreported; an unrequested disappearance is an infrastructure failure.
+                if not self._termination_requested:
+                    self.terminal_return_code = ProcessExitCode.INFRASTRUCTURE_ERROR
                 self.terminal_state = JobState.TERMINATED
                 self._release_job_resources()
             else:
